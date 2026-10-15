@@ -1,0 +1,340 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>THE LAST BREATH</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#090912;color:white;font-family:monospace;overflow:hidden;touch-action:none}
+canvas{display:block;width:100vw;height:100dvh;image-rendering:pixelated}
+button{font-family:monospace;background:#30233f;color:white;border:1px solid #d2a4e8;border-radius:9px;padding:10px;touch-action:none}
+button:active{background:#984b91}
+#hud{position:fixed;top:6px;left:8px;right:8px;display:flex;justify-content:space-between;gap:5px;pointer-events:none}
+.tag{background:#100e20e8;border:1px solid #8f6aa9;border-radius:7px;padding:7px;font-size:11px}
+#controls{position:fixed;bottom:8px;left:8px;right:8px;display:flex;align-items:end;justify-content:space-between}
+#pad{display:grid;grid-template-columns:42px 42px 42px;grid-template-rows:37px 37px 37px;gap:3px}
+#pad button{padding:0;font-size:18px}
+#up{grid-column:2;grid-row:1}#left{grid-column:1;grid-row:2}#down{grid-column:2;grid-row:2}#right{grid-column:3;grid-row:2}
+#actions{display:flex;flex-direction:column;gap:4px;max-width:135px}
+#actions button{font-size:10px;padding:9px 6px}
+#overlay{position:fixed;inset:0;z-index:5;background:#090812ee;display:flex;align-items:center;justify-content:center;padding:15px}
+.panel{width:min(460px,100%);max-height:90dvh;overflow:auto;text-align:center;padding:18px;background:#171225;border:1px solid #b77ec9;border-radius:14px}
+h1{color:#f2a7dc;font-size:clamp(25px,6vw,39px);letter-spacing:2px}
+p{font-size:13px;line-height:1.6;color:#dfd2e9}
+.primary{background:#853e83;padding:12px 20px;margin:5px}
+.hidden{display:none!important}
+#toast{position:fixed;z-index:4;top:42px;left:50%;transform:translateX(-50%);background:#191124;border:1px solid #bb91d0;padding:8px 12px;border-radius:8px;font-size:11px;text-align:center;max-width:90vw}
+#puzzleButtons{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0}
+#puzzleButtons button{min-height:43px}
+#rotate{display:none;position:fixed;z-index:8;inset:0;background:#100b1b;color:white;align-items:center;justify-content:center;text-align:center;padding:30px}
+@media (orientation:portrait) and (max-height:900px){
+ #rotate{display:flex}
+}
+@media (orientation:landscape){#rotate{display:none}}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="rotate"><div><div style="font-size:45px">📱 ↻</div><h2>gire o celular</h2><p>THE LAST BREATH foi feito para jogar na horizontal.</p><button onclick="this.parentElement.parentElement.style.display='none'">continuar mesmo assim</button></div></div>
+
+<div id="hud">
+ <div class="tag">✦ <span id="tasks">0</span>/3 tarefas</div>
+ <div class="tag" id="location">🌲 floresta</div>
+ <div class="tag" id="lightStatus">🔦 lanterna</div>
+</div>
+
+<div id="controls">
+ <div id="pad">
+  <button id="up">▲</button><button id="left">◀</button>
+  <button id="down">▼</button><button id="right">▶</button>
+ </div>
+ <div id="actions">
+  <button id="crouch">↓ ABAIXAR</button>
+  <button id="hide">◈ ESCONDER</button>
+  <button id="interact">↵ INTERAGIR</button>
+  <button id="flash">🔦 LANTERNA</button>
+  <button id="fullscreen">⛶ TELA CHEIA</button>
+ </div>
+</div>
+<div id="toast" class="hidden"></div>
+
+<div id="overlay">
+ <div class="panel">
+  <div style="font-size:36px">🌲 🦋 🌸</div>
+  <h1 id="title">THE LAST BREATH</h1>
+  <p id="story">emy entrou na floresta para encontrar o caminho de casa.<br><br>agora precisa explorar as casas e a escola abandonada, resolver os painéis e descobrir quem está seguindo seus passos.</p>
+  <p>encontre 3 tarefas. agache-se para andar com cuidado. esconda-se quando a criatura estiver perto.</p>
+  <button class="primary" id="start">COMEÇAR</button>
+ </div>
+</div>
+
+<script>
+(()=>{
+const cv=document.getElementById("game"),ctx=cv.getContext("2d");
+const $=id=>document.getElementById(id);
+let W=innerWidth,H=innerHeight,D=1,last=0,playing=false,time=0;
+let keys={},crouch=false,hidden=false,flash=true,taskCount=0;
+let current=null,puzzle=null,toastTime=0,scare=0;
+const world={w:1900,h:1500};
+const emy={x:150,y:180,dir:1};
+let monster={x:1700,y:1200,active:false};
+const buildings=[
+ {name:"casa abandonada",x:400,y:300,w:190,h:140,type:"house"},
+ {name:"casa da família",x:950,y:400,w:210,h:150,type:"house"},
+ {name:"escola abandonada",x:1250,y:900,w:350,h:240,type:"school"}
+];
+const stations=[
+ {x:480,y:340,name:"painel da casa",done:false},
+ {x:1040,y:440,name:"quadro elétrico",done:false},
+ {x:1410,y:960,name:"painel da escola",done:false}
+];
+let trees=[],flowers=[],dust=[];
+function resize(){
+ D=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;
+ cv.width=W*D;cv.height=H*D;ctx.setTransform(D,0,0,D,0,0);
+}
+window.addEventListener("resize",resize);resize();
+function rnd(a,b){return a+Math.random()*(b-a)}
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}
+function reset(){
+ emy.x=150;emy.y=180;emy.dir=1;
+ monster={x:1700,y:1200,active:false};
+ taskCount=0;crouch=false;hidden=false;flash=true;current=null;puzzle=null;time=0;
+ stations.forEach(s=>s.done=false);
+ $("tasks").textContent="0";
+ $("location").textContent="🌲 floresta";
+ $("lightStatus").textContent="🔦 lanterna ligada";
+}
+function say(t,ms=2200){$("toast").textContent=t;$("toast").classList.remove("hidden");toastTime=ms/1000}
+function near(a,b,r){return Math.hypot(a.x-b.x,a.y-b.y)<r}
+function start(){
+ reset();playing=true;$("overlay").classList.add("hidden");
+ say("explore os prédios e complete as tarefas.");last=performance.now();
+ requestAnimationFrame(loop);
+}
+$("start").onclick=start;
+function finish(win){
+ playing=false;$("overlay").classList.remove("hidden");
+ $("title").textContent=win?"VOCÊ ESCAPOU":"FIM DE JOGO";
+ $("story").innerHTML=win?"emy completou as tarefas e encontrou uma saída.<br><br>mas, do outro lado da porta, ouviu a criatura sussurrar seu nome.":"a criatura encontrou emy na escuridão.<br><br><i>você devia ter ficado escondida.</i>";
+ $("start").textContent="JOGAR NOVAMENTE";
+}
+$("fullscreen").onclick=async()=>{
+ try{
+  if(!document.fullscreenElement)await document.documentElement.requestFullscreen();
+  if(screen.orientation&&screen.orientation.lock)await screen.orientation.lock("landscape");
+ }catch(e){say("gire o celular manualmente para a horizontal.");}
+};
+function bindHold(id,fn){
+ const b=$(id);
+ b.addEventListener("pointerdown",e=>{e.preventDefault();fn(true);b.setPointerCapture(e.pointerId)});
+ ["pointerup","pointercancel","lostpointercapture"].forEach(ev=>b.addEventListener(ev,e=>{fn(false)}));
+}
+bindHold("up",v=>keys.up=v);bindHold("down",v=>keys.down=v);
+bindHold("left",v=>keys.left=v);bindHold("right",v=>keys.right=v);
+$("crouch").onclick=()=>{crouch=!crouch;$("crouch").textContent=crouch?"↑ LEVANTAR":"↓ ABAIXAR";say(crouch?"emy está agachada.":"emy se levantou.");};
+$("hide").onclick=()=>{
+ if(hidden){hidden=false;say("emy saiu do esconderijo.");return;}
+ const treeNear=trees.some(t=>near(emy,t,55));
+ const buildingNear=buildings.some(b=>near(emy,{x:b.x+b.w/2,y:b.y+b.h/2},Math.max(b.w,b.h)*.65));
+ if(treeNear||buildingNear){hidden=true;crouch=true;$("crouch").textContent="↑ LEVANTAR";say("voce está escondida. fique quieta.");}
+ else say("procure uma árvore grande ou aproxime-se de um prédio.");
+};
+$("flash").onclick=()=>{flash=!flash;$("lightStatus").textContent=flash?"🔦 lanterna ligada":"🔦 lanterna desligada";};
+$("interact").onclick=interact;
+
+function interact(){
+ if(puzzle){return;}
+ if(hidden){say("saia do esconderijo antes de interagir.");return;}
+ const station=stations.find(s=>!s.done&&near(emy,s,85));
+ if(station){openPuzzle(station);return;}
+ const door=buildings.find(b=>near(emy,{x:b.x+b.w/2,y:b.y+b.h/2},Math.max(b.w,b.h)*.7));
+ if(door){current=current===door?null:door;$("location").textContent=current?"🏚️ "+current.name:"🌲 floresta";say(current?"entrou em "+current.name:"saiu do prédio.");return;}
+ if(near(emy,{x:1800,y:1400},75)&&taskCount===3){finish(true);return;}
+ say(taskCount===3?"vá até a saída no canto inferior direito.":"não há nada para usar aqui.");
+}
+
+const colors=["#f05a76","#56c9f0","#ffd45b","#9ce68a"];
+let wireOrder=[],wireNext=0,activeStation=null;
+function openPuzzle(s){
+ activeStation=s;wireOrder=[0,1,2,3];wireNext=0;
+ // ordem correta das ligações é embaralhada
+ for(let i=wireOrder.length-1;i>0;i--){let j=Math.floor(Math.random()*(i+1));[wireOrder[i],wireOrder[j]]=[wireOrder[j],wireOrder[i]];}
+ puzzle=true;
+ $("overlay").classList.remove("hidden");
+ $("title").textContent="RESTAURAR ENERGIA";
+ $("story").innerHTML="minigame: ligue os fios na ordem indicada.<br>escolha as cores da esquerda para a direita, seguindo a sequência.";
+ const box=document.createElement("div");box.id="puzzleButtons";
+ const target=wireOrder.slice();
+ target.forEach((c,i)=>{
+  const b=document.createElement("button");
+  b.style.borderColor=colors[c];b.style.color=colors[c];
+  b.textContent=["ROSA","AZUL","AMARELO","VERDE"][c];
+  b.onclick=()=>{
+   if(!puzzle)return;
+   if(c===target[wireNext]){
+    b.style.opacity=".35";b.disabled=true;wireNext++;
+    if(wireNext===4){
+     activeStation.done=true;taskCount++;$("tasks").textContent=taskCount;
+     puzzle=false;$("overlay").classList.add("hidden");
+     say("painel restaurado! "+taskCount+"/3 tarefas concluídas.");
+     if(taskCount===1){monster.active=true;say("algo ouviu o barulho... CORRA!",2600);}
+    }
+   }else{
+    say("fio errado! tente novamente.");
+    wireNext=0;box.querySelectorAll("button").forEach(q=>{q.disabled=false;q.style.opacity="1"});
+   }
+  };
+  box.appendChild(b);
+ });
+ $("story").after(box);
+ $("start").textContent="SAIR DO PAINEL";
+ $("start").onclick=()=>{puzzle=false;$("overlay").classList.add("hidden");box.remove();$("start").textContent="JOGAR NOVAMENTE";$("start").onclick=start;};
+ // display hint after target sequence is generated
+ const hint=document.createElement("p");hint.id="hint";
+ hint.textContent="sequência: "+target.map(c=>["ROSA","AZUL","AMARELO","VERDE"][c]).join(" → ");
+ box.before(hint);
+ const oldClose=$("start").onclick;
+ const clean=()=>{box.remove();hint.remove();};
+ $("start").onclick=()=>{clean();puzzle=false;$("overlay").classList.add("hidden");$("start").textContent="JOGAR NOVAMENTE";$("start").onclick=start;};
+}
+
+function drawBuilding(b,c){
+ let x=b.x-c.x,y=b.y-c.y;
+ ctx.fillStyle="#080810";ctx.fillRect(x-8,y-8,b.w+16,b.h+16);
+ ctx.fillStyle=b.type==="school"?"#464052":"#51404c";ctx.fillRect(x,y,b.w,b.h);
+ ctx.fillStyle="#242438";ctx.fillRect(x+7,y+7,b.w-14,b.h-14);
+ ctx.fillStyle="#a27bb4";ctx.fillRect(x+b.w/2-22,y+b.h-12,44,12);
+ if(b.type==="school"){
+  ctx.fillStyle="#d6c2e6";ctx.fillRect(x+b.w/2-45,y+12,90,16);
+  ctx.fillStyle="#171422";ctx.font="11px monospace";ctx.fillText("ESCOLA",x+b.w/2-25,y+24);
+ }
+ for(let xx=x+18;xx<x+b.w-18;xx+=48){
+  ctx.fillStyle="#8bb5bf";ctx.fillRect(xx,y+25,22,24);
+  ctx.fillStyle="#222336";ctx.fillRect(xx+8,y+25,3,24);
+ }
+ ctx.fillStyle="#b887c4";ctx.fillRect(x+b.w/2-10,y+b.h-24,20,24);
+ ctx.fillStyle="#f5b6e9";ctx.font="10px monospace";ctx.fillText(b.name,x,y-13);
+}
+function drawWorld(c){
+ ctx.fillStyle="#121b21";ctx.fillRect(0,0,W,H);
+ ctx.fillStyle="#1d2c2b";
+ for(let x=-(c.x%40);x<W;x+=40)for(let y=-(c.y%40);y<H;y+=40)ctx.fillRect(x,y,2,2);
+ ctx.strokeStyle="#37333b";ctx.lineWidth=75;ctx.beginPath();ctx.moveTo(120-c.x,180-c.y);ctx.lineTo(350-c.x,280-c.y);ctx.lineTo(800-c.x,500-c.y);ctx.lineTo(1150-c.x,780-c.y);ctx.lineTo(1550-c.x,1300-c.y);ctx.stroke();
+ trees.forEach(t=>{
+  let x=t.x-c.x,y=t.y-c.y;
+  if(x<-45||y<-45||x>W+45||y>H+45)return;
+  ctx.fillStyle="#241b30";ctx.fillRect(x-5,y,10,24);
+  ctx.fillStyle=t.c;ctx.beginPath();ctx.arc(x,y,t.r,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle="#34403d";ctx.beginPath();ctx.arc(x-5,y-5,t.r*.6,0,Math.PI*2);ctx.fill();
+ });
+ buildings.forEach(b=>drawBuilding(b,c));
+ stations.forEach(s=>{
+  if(s.done)return;
+  let x=s.x-c.x,y=s.y-c.y;
+  ctx.fillStyle="#28203c";ctx.fillRect(x-12,y-12,24,24);
+  ctx.fillStyle="#e6b1ff";ctx.fillRect(x-6,y-6,12,12);
+  ctx.fillStyle="#fff";ctx.font="10px monospace";ctx.fillText("!",x-3,y+3);
+ });
+ ctx.fillStyle="#d9a7ef";ctx.fillRect(1780-c.x,1380-c.y,30,50);
+ ctx.fillStyle="#fff";ctx.font="11px monospace";ctx.fillText("SAÍDA",1765-c.x,1370-c.y);
+}
+function drawEmy(c){
+ let x=emy.x-c.x,y=emy.y-c.y;
+ ctx.save();ctx.translate(x,y);
+ if(hidden){ctx.globalAlpha=.38;}
+ ctx.fillStyle="#08070c";ctx.fillRect(-9,10,18,5);
+ ctx.fillStyle="#9b456e";ctx.fillRect(-8,1,16,12);
+ ctx.fillStyle="#f0c0a5";ctx.fillRect(-6,5,4,7);ctx.fillRect(2,5,4,7);
+ ctx.fillStyle="#f3a1cb";ctx.fillRect(-8,-9,16,13);
+ ctx.fillStyle="#f0c0a5";ctx.fillRect(-7,-22,14,14);
+ ctx.fillStyle="#69402f";ctx.fillRect(-8,-26,16,8);ctx.fillRect(-10,-22,4,11);ctx.fillRect(6,-22,4,11);
+ ctx.fillStyle="#53db8a";ctx.fillRect(-11,-22,4,5);ctx.fillRect(7,-22,4,5);
+ ctx.fillStyle="#6d8dff";ctx.fillRect(-5,-17,3,3);ctx.fillRect(3,-17,3,3);
+ if(flash){ctx.fillStyle="#ffe58a";ctx.fillRect(emy.dir===1?8:-13,-5,5,5);}
+ ctx.restore();
+}
+function drawMonster(c){
+ if(!monster.active)return;
+ let x=monster.x-c.x,y=monster.y-c.y;
+ ctx.fillStyle="#09060e";ctx.beginPath();ctx.ellipse(x,y,17,25,0,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle="#ff315e";ctx.fillRect(x-9,y-8,5,4);ctx.fillRect(x+4,y-8,5,4);
+ ctx.fillStyle="#332035";ctx.fillRect(x-14,y+10,28,13);
+}
+function draw(){
+ const cam={x:Math.max(0,Math.min(world.w-W,emy.x-W/2)),y:Math.max(0,Math.min(world.h-H,emy.y-H/2))};
+ ctx.save();
+ if(scare>0){ctx.translate(rnd(-4,4),rnd(-4,4));}
+ drawWorld(cam);
+ if(current){
+  ctx.fillStyle="#1c162b";ctx.fillRect(0,0,W,H);
+  ctx.fillStyle="#514257";ctx.fillRect(W*.1,H*.12,W*.8,H*.76);
+  ctx.fillStyle="#28263b";ctx.fillRect(W*.15,H*.18,W*.7,H*.65);
+  for(let i=0;i<6;i++){
+   ctx.fillStyle="#81718b";ctx.fillRect(W*.2+i*W*.1,H*.28,15,25);
+   ctx.fillStyle="#252033";ctx.fillRect(W*.2+i*W*.1,H*.5,32,18);
+  }
+  ctx.fillStyle="#d1b4e2";ctx.font="16px monospace";ctx.fillText(current.name,W*.15,H*.15);
+ }
+ drawEmy(cam);drawMonster(cam);
+ // escuridão e feixe da lanterna
+ if(!current){
+  ctx.fillStyle="rgba(3,3,12,.68)";ctx.fillRect(0,0,W,H);
+  if(flash){
+   ctx.globalCompositeOperation="destination-out";
+   let x=emy.x-cam.x,y=emy.y-cam.y;
+   let g=ctx.createRadialGradient(x,y,12,x,y,Math.max(W,H)*.42);
+   g.addColorStop(0,"rgba(0,0,0,1)");g.addColorStop(1,"rgba(0,0,0,0)");
+   ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+   ctx.globalCompositeOperation="source-over";
+  }
+ }
+ if(hidden){ctx.fillStyle="#0009";ctx.fillRect(0,0,W,H);ctx.fillStyle="#d9c5ef";ctx.font="13px monospace";ctx.fillText("ESCONDIDA — fique quieta",12,H*.2);}
+ ctx.restore();
+}
+function update(dt){
+ time+=dt;if(toastTime>0){toastTime-=dt;if(toastTime<=0)$("toast").classList.add("hidden");}
+ if(scare>0)scare-=dt;
+ if(puzzle||hidden)return;
+ let dx=(keys.right?1:0)-(keys.left?1:0),dy=(keys.down?1:0)-(keys.up?1:0);
+ if(dx||dy){
+  const n=Math.hypot(dx,dy);dx/=n;dy/=n;
+  emy.dir=dx>=0?1:-1;
+  let speed=crouch?65:150;
+  emy.x=Math.max(25,Math.min(world.w-25,emy.x+dx*speed*dt));
+  emy.y=Math.max(25,Math.min(world.h-25,emy.y+dy*speed*dt));
+ }
+ if(monster.active){
+  const d=dist(emy,monster);
+  if(d>0&&!(hidden&&d>60)){
+   const speed=crouch?40:82;
+   monster.x+=(emy.x-monster.x)/d*speed*dt;
+   monster.y+=(emy.y-monster.y)/d*speed*dt;
+  }
+  if(d<27){scare=1;finish(false);}
+ }
+}
+function loop(now){
+ if(!playing)return;
+ const dt=Math.min((now-last)/1000,.04);last=now;
+ update(dt);draw();requestAnimationFrame(loop);
+}
+window.addEventListener("keydown",e=>{
+ const map={ArrowUp:"up",w:"up",ArrowDown:"down",s:"down",ArrowLeft:"left",a:"left",ArrowRight:"right",d:"right"};
+ if(map[e.key]){keys[map[e.key]]=true;e.preventDefault();}
+ if(e.key==="e")interact();
+ if(e.key==="Shift")crouch=true;
+});
+window.addEventListener("keyup",e=>{
+ const map={ArrowUp:"up",w:"up",ArrowDown:"down",s:"down",ArrowLeft:"left",a:"left",ArrowRight:"right",d:"right"};
+ if(map[e.key])keys[map[e.key]]=false;
+ if(e.key==="Shift")crouch=false;
+});
+for(let i=0;i<130;i++)trees.push({x:rnd(20,1880),y:rnd(20,1480),r:rnd(13,27),c:Math.random()>.5?"#203630":"#27263c"});
+})();
+</script>
+</body>
+  </html>
+  
